@@ -59,6 +59,8 @@ ServiceLoader, or other dynamic features such as proxies or JNI.
 If this information is not provided, GraalVM will assume those parts are never used and
 remove them during compilation. As a result, the native executable may fail at runtime,
 even though the same application works correctly on the JVM.
+
+
 ---
 
 ## 2. Step-by-step Changelog
