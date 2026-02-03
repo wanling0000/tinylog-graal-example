@@ -48,17 +48,20 @@ The native image pipeline consists of three conceptual phases:
 
 Why is this needed?
 
-GraalVM must know in advance:
-- Which classes are accessed via reflection
-- Which resources are loaded
-- Which services are discovered via ServiceLoader
-- Which proxies / JNI / dynamic features are used
+When building a native image, GraalVM cannot “discover things at runtime” like the JVM does.
+Everything has to be known ahead of time, during compilation.
 
-If it does not know, it will tree-shake them away, causing runtime errors.
+This means GraalVM needs to be told explicitly about anything that is accessed dynamically,
+for example:
+classes used via reflection, resources loaded from the classpath, services discovered with
+ServiceLoader, or other dynamic features such as proxies or JNI.
 
+If this information is not provided, GraalVM will assume those parts are never used and
+remove them during compilation. As a result, the native executable may fail at runtime,
+even though the same application works correctly on the JVM.
 ---
 
-2. Step-by-step Changelog
+## 2. Step-by-step Changelog
 
 Upstream project:
 
