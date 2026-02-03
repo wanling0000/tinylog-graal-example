@@ -2,12 +2,12 @@ plugins {
     id "base"
     id "java"
     id "application"
-    id "com.palantir.graal" version "0.6.0"
 }
+
+import org.gradle.internal.os.OperatingSystem
 
 ext {
     javaMainClass = "demo.Application"
-    graalVmVersion = "19.2.0"
 }
 
 java {
@@ -17,7 +17,6 @@ java {
 
 repositories {
     mavenCentral()
-    jcenter()
 }
 
 dependencies {
@@ -25,24 +24,91 @@ dependencies {
     implementation "org.tinylog:tinylog-impl:2.1.1"
 }
 
-graal {
-    mainClass javaMainClass
-    graalVersion graalVmVersion
-    outputName "demo"
-    option("--allow-incomplete-classpath")
-}
-
 application {
-    mainClassName = javaMainClass
+    mainClass = javaMainClass
 }
 
-task generateConfiguration(type: Exec) {
+tasks.register("generateConfiguration", Exec) {
     group = "graal"
     description = "Run application to generate the configuration for native image generation"
-    dependsOn jar, extractGraalTooling
-    commandLine project.gradle.gradleUserHomeDir.toPath().resolve("caches/com.palantir.graal/$graalVmVersion/graalvm-ce-$graalVmVersion/bin/java"), "-agentlib:native-image-agent=config-output-dir=" + project.buildDir.toPath().resolve("resources/main/META-INF/native-image"), "-cp", sourceSets.main.runtimeClasspath.getAsPath(), javaMainClass
+    dependsOn(tasks.jar)
+
+    def outputDir = layout.buildDirectory.dir("native-image-agent/META-INF/native-image")
+    def os = OperatingSystem.current()
+    def javaExeName = os.isWindows() ? "java.exe" : "java"
 
     doFirst {
-        mkdir project.buildDir.toPath().resolve("resources/main/META-INF/native-image")
+        def out = outputDir.get().asFile
+        out.mkdirs()
+
+        def javaHome = System.getenv("JAVA_HOME")
+        if (!javaHome) {
+            throw new GradleException("JAVA_HOME is not set. Please set JAVA_HOME to a GraalVM JDK (with native-image).")
+        }
+
+        def javaBin = file("${javaHome}/bin/${javaExeName}")
+        if (!javaBin.exists()) {
+            throw new GradleException("Cannot find ${javaBin}. Check JAVA_HOME.")
+        }
+
+        println "Using java: ${javaBin.absolutePath}"
+        println "Writing native-image configs to: ${out}"
+
+        executable = javaBin.absolutePath
+        args(
+                "-agentlib:native-image-agent=config-output-dir=${out.absolutePath}",
+                "-cp", sourceSets.main.runtimeClasspath.asPath,
+                javaMainClass
+        )
     }
 }
+
+tasks.register("nativeImage", Exec) {
+    group = "graal"
+    description = "Build native image using JAVA_HOME GraalVM (no palantir plugin)"
+
+    dependsOn(tasks.generateConfiguration)
+
+    def os = OperatingSystem.current()
+    def nativeImageExeName = os.isWindows() ? "native-image.cmd" : "native-image"
+
+    def outDirProvider = layout.buildDirectory.dir("graal")
+    def configDirProvider = layout.buildDirectory.dir("native-image-agent/META-INF/native-image")
+    def jarTask = tasks.named("jar", Jar)
+
+    doFirst {
+        def outDir = outDirProvider.get().asFile
+        outDir.mkdirs()
+
+        def javaHome = System.getenv("JAVA_HOME")
+        if (!javaHome) {
+            throw new GradleException("JAVA_HOME is not set. Please set JAVA_HOME to a GraalVM JDK (with native-image).")
+        }
+
+        def nativeImageExe = file("${javaHome}/bin/${nativeImageExeName}")
+        if (!nativeImageExe.exists()) {
+            throw new GradleException("Cannot find ${nativeImageExe}. Check JAVA_HOME and whether native-image is installed.")
+        }
+
+        def jarFile = jarTask.get().archiveFile.get().asFile
+        def configDir = configDirProvider.get().asFile
+
+        println "Using native-image: ${nativeImageExe.absolutePath}"
+        println "Jar: ${jarFile.absolutePath}"
+        println "Config dir: ${configDir.absolutePath}"
+        println "Output: ${new File(outDir, "demo").absolutePath}"
+
+        executable = nativeImageExe.absolutePath
+
+        def cp = sourceSets.main.runtimeClasspath.asPath
+        args(
+                "-cp", cp,
+                "-o", new File(outDir, "demo").absolutePath,
+                "-H:ConfigurationFileDirectories=${configDir.absolutePath}",
+                javaMainClass,
+
+                "--no-fallback"
+        )
+    }
+}
+
